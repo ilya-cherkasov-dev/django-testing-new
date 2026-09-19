@@ -1,23 +1,23 @@
 from http import HTTPStatus
 
+import pytest
+from pytest_django.asserts import assertFormError
+
+from news.forms import BAD_WORDS, WARNING
 from news.models import Comment
 
-from .conftest import (
-    BAD_WORD_TEXT,
-    BAD_WORD_WARNING,
-    COMMENT_TEXT,
-    NEW_COMMENT_TEXT,
-)
 
+def test_anonymous_user_cannot_create_comment(
+    client,
+    news,
+    detail_url,
+    form_data,
+):
+    """Анонимный пользователь не может создать комментарий."""
+    response = client.post(detail_url, data=form_data)
 
-def test_anonymous_user_cannot_create_comment(client, news, detail_url):
-    comments_before = set(Comment.objects.values_list('pk', flat=True))
-
-    response = client.post(detail_url, data={'text': COMMENT_TEXT})
-
-    comments_after = set(Comment.objects.values_list('pk', flat=True))
     assert response.status_code == HTTPStatus.FOUND
-    assert comments_after == comments_before
+    assert Comment.objects.count() == 0
 
 
 def test_author_can_create_comment(
@@ -25,35 +25,35 @@ def test_author_can_create_comment(
     author_client,
     news,
     detail_url,
+    url_to_comments,
+    form_data,
 ):
-    existing_ids = set(Comment.objects.values_list('pk', flat=True))
+    """Авторизованный пользователь создаёт один комментарий к новости."""
+    response = author_client.post(detail_url, data=form_data)
 
-    response = author_client.post(detail_url, data={'text': COMMENT_TEXT})
-
-    created_comments = Comment.objects.exclude(pk__in=existing_ids)
-    assert response.url == f'{detail_url}#comments'
-    assert created_comments.count() == 1
-    comment = created_comments.get()
-    assert comment.text == COMMENT_TEXT
+    assert response.url == url_to_comments
+    assert Comment.objects.count() == 1
+    comment = Comment.objects.get()
+    assert comment.text == form_data['text']
     assert comment.news == news
     assert comment.author == author
 
 
+@pytest.mark.parametrize('word', BAD_WORDS)
 def test_comment_with_bad_word_is_not_created(
     author_client,
     news,
     detail_url,
+    word,
 ):
-    comments_before = set(Comment.objects.values_list('pk', flat=True))
+    """Комментарий со стоп-словом не сохраняется и получает ошибку."""
+    bad_words_data = {'text': f'Какой-то текст, {word}, ещё текст'}
 
-    response = author_client.post(
-        detail_url, data={'text': BAD_WORD_TEXT},
-    )
+    response = author_client.post(detail_url, data=bad_words_data)
 
-    form = response.context['form']
-    assert form.errors['text'] == [BAD_WORD_WARNING]
-    comments_after = set(Comment.objects.values_list('pk', flat=True))
-    assert comments_after == comments_before
+    assert 'form' in response.context
+    assertFormError(response.context['form'], 'text', WARNING)
+    assert Comment.objects.count() == 0
 
 
 def test_author_can_edit_own_comment(
@@ -62,13 +62,15 @@ def test_author_can_edit_own_comment(
     author_client,
     news,
     edit_url,
-    detail_url,
+    url_to_comments,
+    form_data,
 ):
-    response = author_client.post(edit_url, data={'text': NEW_COMMENT_TEXT})
+    """Автор меняет текст своего комментария, не меняя автора и новость."""
+    response = author_client.post(edit_url, data=form_data)
 
     updated_comment = Comment.objects.get(pk=comment.pk)
-    assert response.url == f'{detail_url}#comments'
-    assert updated_comment.text == NEW_COMMENT_TEXT
+    assert response.url == url_to_comments
+    assert updated_comment.text == form_data['text']
     assert updated_comment.author == author
     assert updated_comment.news == news
 
@@ -77,8 +79,10 @@ def test_reader_cannot_edit_foreign_comment(
     comment,
     reader_client,
     edit_url,
+    form_data,
 ):
-    response = reader_client.post(edit_url, data={'text': NEW_COMMENT_TEXT})
+    """Другой пользователь не может изменить чужой комментарий."""
+    response = reader_client.post(edit_url, data=form_data)
 
     saved_comment = Comment.objects.get(pk=comment.pk)
     assert response.status_code == HTTPStatus.NOT_FOUND
@@ -91,12 +95,13 @@ def test_author_can_delete_own_comment(
     comment,
     author_client,
     delete_url,
-    detail_url,
+    url_to_comments,
 ):
+    """Автор может удалить свой комментарий."""
     response = author_client.post(delete_url)
 
-    assert response.url == f'{detail_url}#comments'
-    assert not Comment.objects.filter(pk=comment.pk).exists()
+    assert response.url == url_to_comments
+    assert Comment.objects.count() == 0
 
 
 def test_reader_cannot_delete_foreign_comment(
@@ -104,7 +109,8 @@ def test_reader_cannot_delete_foreign_comment(
     reader_client,
     delete_url,
 ):
+    """Другой пользователь не может удалить чужой комментарий."""
     response = reader_client.post(delete_url)
 
     assert response.status_code == HTTPStatus.NOT_FOUND
-    assert Comment.objects.filter(pk=comment.pk).exists()
+    assert Comment.objects.count() == 1

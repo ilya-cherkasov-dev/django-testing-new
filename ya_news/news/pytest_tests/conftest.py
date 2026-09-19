@@ -1,17 +1,12 @@
 from datetime import timedelta
 
 import pytest
+from django.conf import settings
 from django.test.client import Client
 from django.urls import reverse
 from django.utils import timezone
 
 from news.models import Comment, News
-
-HOME_PAGE_NEWS_LIMIT = 10
-COMMENT_TEXT = 'Текст комментария'
-NEW_COMMENT_TEXT = 'Обновлённый текст комментария'
-BAD_WORD_TEXT = 'Ты редиска, дружище!'
-BAD_WORD_WARNING = 'Не ругайтесь!'
 
 
 @pytest.fixture
@@ -51,27 +46,27 @@ def comment(news, author, db):
     return Comment.objects.create(
         news=news,
         author=author,
-        text=COMMENT_TEXT,
+        text='Текст комментария',
     )
 
 
 @pytest.fixture
 def many_news(db):
     today = timezone.now().date()
-    return News.objects.bulk_create(
+    news_count = settings.NEWS_COUNT_ON_HOME_PAGE
+    News.objects.bulk_create(
         News(
             title=f'Новость {index}',
             text='Текст новости.',
-            date=today - timedelta(days=(HOME_PAGE_NEWS_LIMIT - index)),
+            date=today - timedelta(days=(news_count - index)),
         )
-        for index in range(HOME_PAGE_NEWS_LIMIT + 1)
+        for index in range(news_count + 1)
     )
 
 
 @pytest.fixture
 def many_comments(news, author, db):
     now = timezone.now()
-    comments = []
     for index in range(3):
         item = Comment.objects.create(
             news=news,
@@ -80,8 +75,6 @@ def many_comments(news, author, db):
         )
         item.created = now - timedelta(minutes=index)
         item.save()
-        comments.append(item)
-    return comments
 
 
 @pytest.fixture
@@ -107,6 +100,16 @@ def signup_url():
 @pytest.fixture
 def detail_url(news):
     return reverse('news:detail', args=(news.pk,))
+
+
+@pytest.fixture
+def url_to_comments(detail_url):
+    return f'{detail_url}#comments'
+
+
+@pytest.fixture
+def form_data():
+    return {'text': 'Новый текст комментария'}
 
 
 @pytest.fixture
